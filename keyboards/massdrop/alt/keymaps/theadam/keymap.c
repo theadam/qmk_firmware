@@ -143,8 +143,8 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
 #define LAYER_KEY_COUNT 2
 
 static uint8_t layer_keys[LAYER_KEY_COUNT][2] = {
-  {MAC, 51},
-  {TYPING, 20}
+  {MAC, 62},
+  {TYPING, 61}
 };
 static uint16_t anim_timer;
 static bool showing_mods = false;
