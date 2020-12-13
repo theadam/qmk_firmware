@@ -9,10 +9,12 @@ enum alt_keycodes {
     DBG_KBD,               //DEBUG Toggle Keyboard Prints
     DBG_MOU,               //DEBUG Toggle Mouse Prints
     MD_BOOT,               //Restart into bootloader after hold timeout
+
+    RGB_HOME,
 };
 
 enum LAYERS {
-    DEFAULT = 0,
+  DEFAULT = 0,
     TYPING,
     MAC,
     MODIFIERS,
@@ -43,7 +45,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     ),
     [MODIFIERS] = LAYOUT_65_ansi_blocker(
         KC_ESC,               KC_F1,   KC_F2,   KC_F3,   KC_F4,   KC_F5,   KC_F6,      KC_F7,   KC_F8,   KC_F9,   KC_F10,  KC_F11,          KC_F12,  _______, KC_MUTE, \
-        _______,              RGB_SPD, RGB_VAI, RGB_SPI, RGB_HUI, RGB_SAI, _______,    U_T_AUTO,U_T_AGCR,_______, KC_PSCR, KC_SLCK,         KC_PAUS, _______, KC_END, \
+        _______,              RGB_SPD, RGB_VAI, RGB_SPI, RGB_HUI, RGB_SAI, _______,    U_T_AUTO,U_T_AGCR,_______, KC_PSCR, KC_SLCK,         KC_PAUS, _______, RGB_HOME, \
         _______,              RGB_RMOD,RGB_VAD, RGB_MOD, RGB_HUD, RGB_SAD, _______,    _______, _______, _______, _______, _______,                  _______, KC_VOLU, \
         _______,              RGB_TOG, _______, _______, _______, MD_BOOT, NK_TOGG,    DBG_TOG, _______, _______, _______, _______,                  KC_PGUP, KC_VOLD, \
         _______,              _______, _______,                            TG(TYPING),                            TG(MAC), _______,         KC_HOME, KC_PGDN, KC_END  \
@@ -63,8 +65,92 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 #define MODS_CTRL  (get_mods() & MOD_BIT(KC_LCTL) || get_mods() & MOD_BIT(KC_RCTRL))
 #define MODS_ALT  (get_mods() & MOD_BIT(KC_LALT) || get_mods() & MOD_BIT(KC_RALT))
 
+#define SCRENSAVER_TIMEOUT 30000
+#define SWITCH_TIMEOUT 30000
+#define OFF_TIMEOUT 1200000
+
+static bool is_idle = false;
+static bool is_asleep = false;
+static uint32_t idle_timer;
+static HSV saved_hsv;
+static uint8_t saved_mode;
+static uint8_t saved_spd;
+static uint32_t last_saver = 0;
+
+#define SET_ANIM(MODE, H, S, V, SPD)\
+      rgb_matrix_mode(MODE); \
+      rgb_matrix_sethsv(H, S, V); \
+      rgb_matrix_set_speed(SPD); \
+
+#define START_SCREENSAVER() \
+    switch(rand() % 7) { \
+      case 0: \
+        SET_ANIM(RGB_MATRIX_RAINDROPS, 0, RGB_MATRIX_STARTUP_SAT, RGB_MATRIX_STARTUP_VAL, 255) \
+        break; \
+      case 1: \
+        SET_ANIM(RGB_MATRIX_JELLYBEAN_RAINDROPS, 0, RGB_MATRIX_STARTUP_SAT, RGB_MATRIX_STARTUP_VAL, 255) \
+        break; \
+      case 2: \
+        SET_ANIM(RGB_MATRIX_CUSTOM_BREATHING_CHANGE, rand() % 255, 255, 255, 127) \
+        break; \
+      case 3: \
+        SET_ANIM(RGB_MATRIX_CYCLE_ALL, 0, RGB_MATRIX_STARTUP_SAT, RGB_MATRIX_STARTUP_VAL, 40) \
+        break; \
+      case 4: \
+        SET_ANIM(RGB_MATRIX_CYCLE_LEFT_RIGHT, 0, RGB_MATRIX_STARTUP_SAT, RGB_MATRIX_STARTUP_VAL, 80) \
+        break; \
+      case 5: \
+        SET_ANIM(RGB_MATRIX_DIGITAL_RAIN, 0, RGB_MATRIX_STARTUP_SAT, RGB_MATRIX_STARTUP_VAL, 255) \
+        break; \
+      case 6: \
+        SET_ANIM(RGB_MATRIX_CUSTOM_CHRISTMAS_RAINDROPS, 0, 255, RGB_MATRIX_STARTUP_VAL, 255) \
+        break; \
+    }
+
+
+static uint32_t elapsed;
+void matrix_scan_user(void) {
+  elapsed = timer_elapsed32(idle_timer);
+  if (!is_asleep) {
+    if (elapsed > SCRENSAVER_TIMEOUT && !is_idle) {
+      is_idle = true;
+      saved_mode = rgb_matrix_config.mode;
+      saved_hsv = rgb_matrix_config.hsv;
+      saved_spd = rgb_matrix_config.speed;
+      last_saver = elapsed;
+      START_SCREENSAVER()
+    } else if (is_idle && last_saver + SWITCH_TIMEOUT < elapsed) {
+      last_saver = elapsed;
+      START_SCREENSAVER()
+    } else if (is_idle && elapsed > OFF_TIMEOUT) {
+      is_asleep = true;
+      SET_ANIM(RGB_MATRIX_NONE, 0, 0, 0 , 0)
+    }
+  }
+}
+
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
     static uint32_t key_timer;
+
+    if(is_idle && keycode == KC_RIGHT) {
+      if (record->event.pressed) {
+        last_saver = timer_elapsed32(idle_timer);
+        START_SCREENSAVER()
+      }
+      return false;
+    }
+
+    if (is_idle || is_asleep) {
+      is_idle = false;
+      is_asleep = false;
+      SET_ANIM(
+          saved_mode,
+          saved_hsv.h,
+          saved_hsv.s,
+          saved_hsv.v,
+          saved_spd);
+    }
+    idle_timer = timer_read32();
 
     switch (keycode) {
         case U_T_AUTO:
@@ -104,6 +190,16 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
                 if (timer_elapsed32(key_timer) >= 500) {
                     reset_keyboard();
                 }
+            }
+            return false;
+        case RGB_HOME:
+            if (record->event.pressed) {
+              SET_ANIM(
+                  RGB_MATRIX_STARTUP_MODE,
+                  RGB_MATRIX_STARTUP_HUE,
+                  RGB_MATRIX_STARTUP_SAT,
+                  RGB_MATRIX_STARTUP_VAL,
+                  RGB_MATRIX_STARTUP_SPD);
             }
             return false;
         case RGB_TOG:
@@ -208,7 +304,7 @@ bool led_update_user(led_t led_state) {
 }
 
 void rgb_matrix_indicators_user() {
-  if (caps_on) {
+  if (!is_idle && !is_asleep && caps_on) {
     float raw_perc = (timer_elapsed(caps_timer) % CAPS_ANIMATION_LENGTH) / (CAPS_ANIMATION_LENGTH / 2.0);
     if (raw_perc > 1) {
       raw_perc = 2.0 - raw_perc;
